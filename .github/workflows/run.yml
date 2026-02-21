@@ -1,5 +1,4 @@
-n
-ame: Run TikTok Script
+name: Run TikTok Script
 
 on:
   push:
