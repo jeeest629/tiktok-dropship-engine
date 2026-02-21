@@ -1,0 +1,52 @@
+[33mcommit 120608aa4ff7dbddd9393fb10aff8fba2f02fa70[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mdev[m[33m)[m
+Author: Jeeest629 <jeeest@gmail.com>
+Date:   Sat Feb 21 16:05:35 2026 +0100
+
+    Remove service account and add gitignore
+
+.gitignore
+service_account.json
+
+[33mcommit 97f95cc69f260a7e1a12f6680f9160653d59ef42[m[33m ([m[1;32mmain[m[33m)[m
+Merge: a9d907a 3a4a69a
+Author: Jeeest629 <jeeest@gmail.com>
+Date:   Sat Feb 21 14:09:13 2026 +0100
+
+    Merge branch 'main' of https://github.com/jeeest629/tiktok-dropship-engine
+
+[33mcommit a9d907a72f222cc3ff3125418a9a04a420a63683[m
+Author: Jeeest629 <jeeest@gmail.com>
+Date:   Sat Feb 21 13:48:21 2026 +0100
+
+    Add minimal working TikTok Sheet pipeline
+
+config.py
+main.py
+
+[33mcommit 3a4a69a0be9c8623d7d1f5672fb29e60d68d315f[m[33m ([m[1;31morigin/main[m[33m)[m
+Author: jeeest629 <jeeest@gmail.com>
+Date:   Sat Feb 21 13:47:49 2026 +0100
+
+    Update run.yml
+
+.github/workflows/run.yml
+
+[33mcommit 381cdd72d6ca52179847438665c2781d814d862b[m
+Author: jeeest629 <jeeest@gmail.com>
+Date:   Sat Feb 21 13:33:57 2026 +0100
+
+    Create run.yml
+
+.github/workflows/run.yml
+
+[33mcommit bcc65d4216a5484f702441f41e755b8c9e486c0c[m
+Author: Jeeest629 <jeeest@gmail.com>
+Date:   Sat Feb 21 13:21:08 2026 +0100
+
+    Initial commit
+
+config.py
+main.py
+requirements.txt
+service_account.json
+sheets_test.py

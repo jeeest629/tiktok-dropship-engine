@@ -1,0 +1,28 @@
+n
+ame: Run TikTok Script
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "0 6 * * *"  # elke dag om 6:00
+
+jobs:
+  run-script:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v3
+
+      # Maak tijdelijk service_account.json bestand aan vanuit secret
+      - name: Write service account file
+        run: echo "${{ secrets.GOOGLE_CREDENTIALS }}" > service_account.json
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          playwright install
+
+      - name: Run Python script
+        run: python main.py
