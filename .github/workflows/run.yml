@@ -19,7 +19,11 @@ jobs:
           python-version: "3.14"
 
       - name: Write service account file
-        run: echo "${{ secrets.GOOGLE_CREDENTIALS }}" > service_account.json
+        shell: bash
+        run: |
+          echo "$GOOGLE_JSON" > service_account.json
+        env:
+          GOOGLE_JSON: ${{ secrets.GOOGLE_CREDENTIALS }}
 
       - name: Install dependencies
         run: |
