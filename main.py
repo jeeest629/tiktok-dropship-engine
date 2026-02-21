@@ -1,18 +1,18 @@
-import gspread
-from google.oauth2.service_account import Credentials
+import requests
+from bs4 import BeautifulSoup
 
-SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
+URL = "https://ads.tiktok.com/business/creativecenter/topads/pc/en"
 
-creds = Credentials.from_service_account_file(
-    "service_account.json",
-    scopes=SCOPES
-)
+headers = {
+    "User-Agent": "Mozilla/5.0"
+}
 
-client = gspread.authorize(creds)
+response = requests.get(URL, headers=headers)
 
-sheet = client.open_by_key("12C4VM7yU4i1TUrxA0tpPp1zfpDvvoSAeBGkTgZa1x6E")
-worksheet = sheet.sheet1
+print("Status code:", response.status_code)
 
-worksheet.update("A1", "GitHub test werkt")
+soup = BeautifulSoup(response.text, "lxml")
 
-print("Sheet update gelukt")
+title = soup.title.string if soup.title else "Geen title gevonden"
+
+print("Page title:", title)
