@@ -23,8 +23,10 @@ jobs:
 
       - name: Install dependencies
         run: |
+          ls -la
+          cat requirements.txt
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install gspread google-auth requests
 
       - name: Run script
         run: python main.py
