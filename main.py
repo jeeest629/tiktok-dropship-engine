@@ -1,31 +1,18 @@
 import gspread
 from google.oauth2.service_account import Credentials
-from config import SHEET_KEY
 
-def connect_sheet():
-    scope = [
-        "https://www.googleapis.com/auth/spreadsheets",
-        "https://www.googleapis.com/auth/drive"
-    ]
-    creds = Credentials.from_service_account_file("service_account.json", scopes=scope)
-    client = gspread.authorize(creds)
-    sheet = client.open_by_key(SHEET_KEY).sheet1
-    return sheet
+SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
 
-def write_sample_data(sheet):
-    # test of alles werkt
-    data = [
-        ["Keyword", "Ad ID", "Views", "Engagement Score"],
-        ["kitchen gadget", "12345", 50000, 0.25],
-        ["car accessory", "67890", 80000, 0.40]
-    ]
-    sheet.clear()
-    sheet.update("A1", data)
+creds = Credentials.from_service_account_file(
+    "service_account.json",
+    scopes=SCOPES
+)
 
-def main():
-    sheet = connect_sheet()
-    write_sample_data(sheet)
-    print("Data succesvol naar Sheet geschreven!")
+client = gspread.authorize(creds)
 
-if __name__ == "__main__":
-    main()
+sheet = client.open_by_key("12C4VM7yU4i1TUrxA0tpPp1zfpDvvoSAeBGkTgZa1x6E")
+worksheet = sheet.sheet1
+
+worksheet.update("A1", "GitHub test werkt")
+
+print("Sheet update gelukt")
