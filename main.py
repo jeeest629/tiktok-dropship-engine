@@ -1,7 +1,6 @@
 import asyncio
 import json
 import gspread
-import requests
 from google.oauth2.service_account import Credentials
 from playwright.async_api import async_playwright
 
@@ -28,79 +27,70 @@ def analyze_ad(ad):
 # --- 3. CORE ENGINE ---
 async def run():
     sheet = get_sheet()
-    user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
-    cookies_dict = {}
+    ads_collected = []
 
     async with async_playwright() as p:
-        print("🌐 Browser opstarten (Ultra-Light mode)...")
-        browser = await p.chromium.launch(headless=True)
-        context = await browser.new_context(user_agent=user_agent)
+        print("🌐 Browser opstarten in High-Stealth mode...")
+        # We gebruiken een specifieke browser launch om detectie te minimaliseren
+        browser = await p.chromium.launch(headless=True, args=["--disable-blink-features=AutomationControlled"])
+        
+        # Maak een context die een echte gebruiker simuleert
+        context = await browser.new_context(
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+            viewport={'width': 1920, 'height': 1080},
+            device_scale_factor=1,
+        )
+        
         page = await context.new_page()
 
-        # We verhogen de timeout en wachten NIET op networkidle
-        print("🚀 Snel cookies oogsten...")
+        # Interceptor: Luister naar de API-stroom van TikTok zelf
+        async def handle_response(response):
+            # De endpoint is dynamisch, we zoeken op een gedeelte van de URL
+            if "top_ads/v2/list" in response.url:
+                try:
+                    if response.status == 200:
+                        data = await response.json()
+                        materials = data.get("data", {}).get("materials", [])
+                        if materials:
+                            print(f"✨ DATA GEVONDEN! {len(materials)} ads onderschept.")
+                            for ad in materials:
+                                ads_collected.append(analyze_ad(ad))
+                except Exception:
+                    pass
+
+        page.on("response", handle_response)
+
+        print("🚀 Navigeren naar Trends om sessie te vestigen...")
+        await page.goto("https://ads.tiktok.com/business/creativecenter/inspiration/trends/pc/en", wait_until="domcontentloaded")
+        await asyncio.sleep(5)
+
+        print("📡 Overstappen naar Top Ads (Achtergrond-interceptie)...")
+        # We navigeren naar de pagina, maar verwachten niet dat deze visueel laadt
+        # De API call wordt vaak direct bij het laden afgevuurd
         try:
-            await page.goto("https://ads.tiktok.com/business/creativecenter/inspiration/trends/pc/en", 
+            await page.goto("https://ads.tiktok.com/business/creativecenter/topads/pc/en?period=30&region=US", 
                             wait_until="commit", timeout=60000)
-            # Korte pauze om JS de kans te geven cookies te zetten
-            await asyncio.sleep(5) 
-            cookies = await context.cookies()
-            cookies_dict = {c['name']: c['value'] for c in cookies}
-            print(f"🔑 {len(cookies_dict)} sessie-cookies gevonden.")
-        except Exception as e:
-            print(f"⚠️ Cookie-extractie waarschuwing: {e}")
-        finally:
-            await browser.close()
-
-    if not cookies_dict:
-        print("❌ Geen cookies beschikbaar. Poging zonder cookies via requests...")
-
-    # STAP 2: De feitelijke API aanroep via Requests
-    print("📡 Directe API-aanvraag uitvoeren...")
-    api_url = "https://ads.tiktok.com/business/creativecenter/creative_radar_api/v1/top_ads/v2/list"
-    headers = {
-        "User-Agent": user_agent,
-        "Accept": "application/json, text/plain, */*",
-        "Referer": "https://ads.tiktok.com/business/creativecenter/inspiration/topads/pc/en",
-        "x-requested-with": "XMLHttpRequest",
-        "client-type": "PC"
-    }
-    params = {
-        "limit": "20",
-        "period": "30",
-        "region": "US",
-        "sort_by": "fb_receive_count",
-        "page": "1"
-    }
-
-    try:
-        # We gebruiken een session voor betere header-handling
-        session = requests.Session()
-        response = session.get(api_url, headers=headers, params=params, cookies=cookies_dict, timeout=20)
-        
-        print(f"Status Code: {response.status_code}")
-        
-        if response.status_code == 200:
-            data = response.json()
-            materials = data.get("data", {}).get("materials", [])
             
-            if materials:
-                print(f"✨ SUCCES! {len(materials)} ads gevonden.")
-                rows = [analyze_ad(ad) for ad in materials]
-                if sheet:
-                    sheet.append_rows(rows)
-                    print("📊 Data succesvol in Google Sheets!")
-            else:
-                print("⚠️ API antwoordde met status 200 maar zonder ads.")
-                print(f"Respons-preview: {response.text[:200]}")
-        else:
-            print(f"❌ API Fout {response.status_code}")
-            # Maak een dummy screenshot van de situatie (niet mogelijk met requests, maar we loggen de body)
-            if "Forbidden" in response.text or response.status_code == 403:
-                print("⛔ IP Geblokkeerd door TikTok. Tijd voor een proxy.")
+            # We simuleren 'menselijk' wachten en kleine bewegingen om de scripts te triggeren
+            for i in range(15):
+                if ads_collected: break
+                print(f"Zoeken naar data... ({i+1}/15)")
+                await page.mouse.wheel(0, 500)
+                await asyncio.sleep(2)
 
-    except Exception as e:
-        print(f"❌ Kritieke fout: {e}")
+        except Exception as e:
+            print(f"⚠️ Navigatie waarschuwing: {e}")
+
+        if ads_collected and sheet:
+            # Voorkom duplicaten in de lijst
+            unique_ads = list({v[0]: v for v in ads_collected}.values())
+            sheet.append_rows(unique_ads)
+            print(f"📊 {len(unique_ads)} unieke ads naar Google Sheets geschreven!")
+        else:
+            print("❌ Geen data kunnen onderscheppen. TikTok blokkeert de data-flow volledig voor dit IP.")
+            await page.screenshot(path="final_debug.png")
+
+        await browser.close()
 
 if __name__ == "__main__":
     asyncio.run(run())
