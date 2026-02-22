@@ -1,4 +1,3 @@
-
 import asyncio
 import json
 import gspread
@@ -32,33 +31,39 @@ async def run():
     user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
     cookies_dict = {}
 
-    # STAP 1: Gebruik browser enkel voor sessie-validatie (Cookies)
     async with async_playwright() as p:
-        print("🌐 Browser opstarten voor sessie-extractie...")
+        print("🌐 Browser opstarten (Ultra-Light mode)...")
         browser = await p.chromium.launch(headless=True)
         context = await browser.new_context(user_agent=user_agent)
         page = await context.new_page()
 
-        # Trends laadt bijna altijd, dit zet de noodzakelijke 'tt_webid' en 'msToken'
-        await page.goto("https://ads.tiktok.com/business/creativecenter/inspiration/trends/pc/en", wait_until="networkidle")
-        
-        cookies = await context.cookies()
-        cookies_dict = {c['name']: c['value'] for c in cookies}
-        print(f"🔑 {len(cookies_dict)} sessie-cookies geëxtraheerd.")
-        await browser.close()
+        # We verhogen de timeout en wachten NIET op networkidle
+        print("🚀 Snel cookies oogsten...")
+        try:
+            await page.goto("https://ads.tiktok.com/business/creativecenter/inspiration/trends/pc/en", 
+                            wait_until="commit", timeout=60000)
+            # Korte pauze om JS de kans te geven cookies te zetten
+            await asyncio.sleep(5) 
+            cookies = await context.cookies()
+            cookies_dict = {c['name']: c['value'] for c in cookies}
+            print(f"🔑 {len(cookies_dict)} sessie-cookies gevonden.")
+        except Exception as e:
+            print(f"⚠️ Cookie-extractie waarschuwing: {e}")
+        finally:
+            await browser.close()
 
     if not cookies_dict:
-        print("❌ Geen cookies kunnen vinden. Stop.")
-        return
+        print("❌ Geen cookies beschikbaar. Poging zonder cookies via requests...")
 
-    # STAP 2: Voer de aanvraag uit via Python Requests (omzeilt browser-fingerprinting)
-    print("📡 Starten van directe API-aanvraag via Requests...")
+    # STAP 2: De feitelijke API aanroep via Requests
+    print("📡 Directe API-aanvraag uitvoeren...")
     api_url = "https://ads.tiktok.com/business/creativecenter/creative_radar_api/v1/top_ads/v2/list"
     headers = {
         "User-Agent": user_agent,
         "Accept": "application/json, text/plain, */*",
         "Referer": "https://ads.tiktok.com/business/creativecenter/inspiration/topads/pc/en",
-        "x-requested-with": "XMLHttpRequest"
+        "x-requested-with": "XMLHttpRequest",
+        "client-type": "PC"
     }
     params = {
         "limit": "20",
@@ -69,28 +74,33 @@ async def run():
     }
 
     try:
-        response = requests.get(api_url, headers=headers, params=params, cookies=cookies_dict, timeout=15)
+        # We gebruiken een session voor betere header-handling
+        session = requests.Session()
+        response = session.get(api_url, headers=headers, params=params, cookies=cookies_dict, timeout=20)
+        
+        print(f"Status Code: {response.status_code}")
         
         if response.status_code == 200:
             data = response.json()
             materials = data.get("data", {}).get("materials", [])
             
             if materials:
-                print(f"✨ SUCCES! {len(materials)} ads opgehaald.")
+                print(f"✨ SUCCES! {len(materials)} ads gevonden.")
                 rows = [analyze_ad(ad) for ad in materials]
                 if sheet:
                     sheet.append_rows(rows)
-                    print("📊 Data weggeschreven naar Google Sheets.")
+                    print("📊 Data succesvol in Google Sheets!")
             else:
-                print("⚠️ API gaf 200 OK, maar de lijst is leeg. TikTok vereist extra parameters.")
-                print(f"Respons: {response.text[:200]}")
+                print("⚠️ API antwoordde met status 200 maar zonder ads.")
+                print(f"Respons-preview: {response.text[:200]}")
         else:
-            print(f"❌ API weigering status {response.status_code}.")
-            if response.status_code == 403:
-                print("💡 Tip: Het IP van de GitHub Actions runner is geblokkeerd. We hebben een proxy nodig.")
+            print(f"❌ API Fout {response.status_code}")
+            # Maak een dummy screenshot van de situatie (niet mogelijk met requests, maar we loggen de body)
+            if "Forbidden" in response.text or response.status_code == 403:
+                print("⛔ IP Geblokkeerd door TikTok. Tijd voor een proxy.")
 
     except Exception as e:
-        print(f"❌ Requests fout: {e}")
+        print(f"❌ Kritieke fout: {e}")
 
 if __name__ == "__main__":
     asyncio.run(run())
