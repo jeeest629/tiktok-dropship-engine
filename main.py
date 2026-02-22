@@ -15,7 +15,7 @@ def get_sheet():
         print(f"❌ Sheets Fout: {e}")
         return None
 
-# --- 2. ANALYSE LOGICA (Fase 5, 6 & 7) ---
+# --- 2. ANALYSE LOGICA ---
 def analyze_ad(ad):
     desc = ad.get("ad_description", "").lower()
     stats = ad.get("stats", {})
@@ -29,57 +29,60 @@ async def run():
     sheet = get_sheet()
     
     async with async_playwright() as p:
-        print("🌐 Browser opstarten...")
+        print("🌐 Browser opstarten in stealth mode...")
         browser = await p.chromium.launch(headless=True)
-        # We gebruiken een context die cookies en headers strikt beheert
         context = await browser.new_context(
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
         )
         page = await context.new_page()
 
-        # Stap 1: Alleen commit afwachten om cookies te vangen op Trends
-        print("🚀 Sessie-initialisatie op Trends...")
-        await page.goto("https://ads.tiktok.com/business/creativecenter/inspiration/trends/pc/en", 
-                        wait_until="commit", timeout=60000)
-        await asyncio.sleep(10) 
+        # We registreren een listener die wacht tot de ECHTE TikTok site de API aanroept
+        print("🚀 Sessie opwarmen en wachten op natuurlijke API-stroom...")
         
-        # Stap 2: Actieve API-aanroep forceren met gespoofte headers
-        # We gebruiken page.evaluate om de browser de request te laten doen
-        print("📡 Forceren van geautoriseerde API-fetch...")
-        api_url = "https://ads.tiktok.com/business/creativecenter/creative_radar_api/v1/top_ads/v2/list?limit=20&period=30&region=US&sort_by=fb_receive_count"
-        
-        try:
-            # We injecteren een fetch die de Referer header handmatig zet
-            raw_data = await page.evaluate(f"""
-                async () => {{
-                    const response = await fetch('{api_url}', {{
-                        "headers": {{
-                            "accept": "application/json, text/plain, */*",
-                            "referer": "https://ads.tiktok.com/business/creativecenter/inspiration/topads/pc/en",
-                            "x-requested-with": "XMLHttpRequest"
-                        }},
-                        "method": "GET"
-                    }});
-                    return await response.json();
-                }}
-            """)
-            
-            materials = raw_data.get("data", {}).get("materials", [])
-            if materials:
-                print(f"✨ SUCCES! {len(materials)} ads opgehaald via header-injection.")
-                rows = [analyze_ad(ad) for ad in materials]
-                if sheet:
-                    sheet.append_rows(rows)
-                    print("📊 Data weggeschreven naar Google Sheets.")
-            else:
-                print("⚠️ API antwoordde met lege data. TikTok herkent de fetch als bot.")
-                print(f"Debug: {json.dumps(raw_data)[:200]}")
-                
-        except Exception as e:
-            print(f"❌ Header-injection mislukt: {e}")
-            await page.screenshot(path="injection_error.png")
+        ads_found = []
 
-        await browser.close()
+        async def intercept_response(response):
+            if "top_ads/v2/list" in response.url:
+                try:
+                    if response.status == 200:
+                        data = await response.json()
+                        materials = data.get("data", {}).get("materials", [])
+                        if materials:
+                            print(f"✨ API GEKAAST! {len(materials)} ads onderschept.")
+                            for ad in materials:
+                                ads_found.append(analyze_ad(ad))
+                except Exception:
+                    pass
+
+        page.on("response", intercept_response)
+
+        try:
+            # We gaan naar de pagina, maar we negeren de visuele blokkade (het slotje)
+            # Omdat de API call vaak direct bij het laden gebeurt, vangen we hem hier
+            print("📡 Navigeren naar doelsectie...")
+            await page.goto("https://ads.tiktok.com/business/creativecenter/topads/pc/en?period=30&region=US", 
+                            wait_until="commit", timeout=60000)
+            
+            # We wachten 20 seconden. Zelfs als er een slotje staat, 
+            # heeft de browser op de achtergrond vaak al de eerste API-call gedaan.
+            for i in range(10):
+                if ads_found: break
+                print(f"Wachten op data... ({i+1}/10)")
+                await asyncio.sleep(2)
+                # We proberen de pagina te 'poken' met JS om calls te forceren
+                await page.evaluate("window.scrollTo(0, 500)")
+
+            if ads_found and sheet:
+                sheet.append_rows(ads_found)
+                print(f"📊 {len(ads_found)} rijen succesvol naar Google Sheets gepusht!")
+            else:
+                print("⚠️ Geen data kunnen kapen. De beveiligingsmuur is te dik voor dit IP.")
+                await page.screenshot(path="failed_intercept.png")
+
+        except Exception as e:
+            print(f"❌ Fout tijdens kaping: {e}")
+        finally:
+            await browser.close()
 
 if __name__ == "__main__":
     asyncio.run(run())
