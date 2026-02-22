@@ -30,7 +30,7 @@ jobs:
           pip install -r requirements.txt
 
       - name: Install Playwright Browsers
-        run: playwright install --with-deps
+        run: playwright install chromium --with-deps
 
       - name: Install dependencies
         run: |
