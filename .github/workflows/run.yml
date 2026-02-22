@@ -8,6 +8,9 @@ on:
 jobs:
   run-script:
     runs-on: ubuntu-latest
+    # Verleng de totale timeout voor de job aangezien browser-init en scrollen tijd kosten
+    timeout-minutes: 10 
+    
     steps:
       - name: Checkout repo
         uses: actions/checkout@v3
@@ -27,19 +30,21 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
+          # Zorg dat gspread, google-auth en playwright in requirements.txt staan
           pip install -r requirements.txt
           playwright install chromium --with-deps
 
       - name: Run script
-        run: python main.py
+        # Gebruik unbuffer of stdbuf om logs direct te zien in de GitHub console
+        run: python -u main.py 
         env:
           GOOGLE_JSON: ${{ secrets.GOOGLE_CREDENTIALS }}
 
-      # NIEUWE STAP: Sla de screenshot op als 'Artifact'
       - name: Upload Debug Screenshot
-        if: always() # Zorgt dat dit ook gebeurt als het script faalt
+        if: always() 
         uses: actions/upload-artifact@v4
         with:
           name: tiktok-debug-image
-          path: tiktok_debug.png
+          # We gebruiken een wildcard voor het geval er meerdere screenshots worden gemaakt
+          path: "*.png" 
           retention-days: 5
