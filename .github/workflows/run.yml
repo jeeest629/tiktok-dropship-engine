@@ -24,11 +24,21 @@ jobs:
           echo "$GOOGLE_JSON" > service_account.json
         env:
           GOOGLE_JSON: ${{ secrets.GOOGLE_CREDENTIALS }}
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Install Playwright Browsers
+        run: playwright install --with-deps
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install gspread google-auth requests beautifulsoup4 lxml
+          pip install -r requirements.txt
+
+      - name: Install Playwright Browsers
+        run: playwright install --with-deps
 
       - name: Run script
         run: python main.py
