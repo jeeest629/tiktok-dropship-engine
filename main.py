@@ -4,7 +4,7 @@ from playwright.async_api import async_playwright
 
 async def run():
     async with async_playwright() as p:
-        # Launch browser met stealth-instellingen om blokkades te voorkomen 
+        # Launch browser met stealth-instellingen
         browser = await p.chromium.launch(
             headless=True,
             args=[
@@ -14,15 +14,18 @@ async def run():
             ]
         )
         
-        # Gebruik een realistische viewport en User-Agent
+        # Gebruik een specifieke context met extra headers
         context = await browser.new_context(
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
-            viewport={'width': 1920, 'height': 1080}
+            viewport={'width': 1920, 'height': 1080},
+            extra_http_headers={
+                "Referer": "https://ads.tiktok.com/business/creativecenter/inspiration/topads/pc/en"
+            }
         )
         
         page = await context.new_page()
 
-        # Phase 3: Interceptie van de 'Creative Radar' API [cite: 34]
+        # Interceptor voor de Top Ads API
         async def handle_response(response):
             if "creative_radar_api/v1/top_ads/v2/list" in response.url:
                 try:
@@ -32,45 +35,37 @@ async def run():
                     if materials:
                         print(f"\n🚀 API DOORBRAAK! Ads gevonden: {len(materials)}")
                         print("\n--- BESCHIKBARE DATA VELDEN (KEYS) ---")
-                        # Dit toont ons de velden zoals 'ad_id', 'stats', 'video_info' [cite: 34]
                         print(list(materials[0].keys())) 
                         
                         print("\n--- PREVIEW EERSTE AD DATA ---")
-                        print(json.dumps(materials[0], indent=2)[:500])
+                        print(json.dumps(materials[0], indent=2)[:800])
                     else:
-                        print("⚠️ De API stuurde een lege lijst met materials.")
+                        print("⚠️ API gevonden, maar de material-lijst is leeg.")
                 except Exception as e:
                     print(f"⚠️ Fout bij verwerken API JSON: {e}")
 
-        # Registreer de interceptor
         page.on("response", handle_response)
 
-        print("Navigeren naar het Top Ads Dashboard...")
+        print("Navigeren naar de Top Ads Deep-Link...")
         try:
-            # Direct naar de dashboard URL met filters (Periode: 30 dagen, Regio: US) 
-            target_url = "https://ads.tiktok.com/business/creativecenter/topads/pc/en?period=30&region=US"
-            await page.goto(target_url, wait_until="domcontentloaded", timeout=60000)
+            # Directe link met parameters om de juiste API te triggeren
+            target_url = "https://ads.tiktok.com/business/creativecenter/topads/pc/en?period=30&region=US&sort_by=fb_receive_count"
             
-            # Wacht specifiek tot de advertentie-kaarten in de DOM verschijnen
-            print("Wachten op advertentie-kaarten...")
-            try:
-                # We zoeken naar een element dat typisch is voor een geladen ad-grid
-                await page.wait_for_selector("div[class*='Card']", timeout=20000)
-            except:
-                print("Waarschuwing: Specifieke ad-selector niet gevonden, we gaan door met scrollen.")
-
-            # Scrollen om extra API calls te forceren (nabootsen gebruiker) 
-            print("Scrollen om data-inlaad te forceren...")
-            for _ in range(3):
-                await page.mouse.wheel(0, 1000)
+            await page.goto(target_url, wait_until="networkidle", timeout=60000)
+            
+            # Wacht op de advertentie-kaarten (meestal div's met een 'Card' class)
+            print("Wachten op het laden van de advertentie-grid...")
+            await page.wait_for_timeout(10000) # Harde pauze voor JS rendering
+            
+            # Forceer interactie om lazy-loading API's te triggeren
+            print("Scrollen voor data-extractie...")
+            for i in range(5):
+                await page.mouse.wheel(0, 800)
                 await page.wait_for_timeout(2000)
 
-            # Sla een nieuwe screenshot op om de huidige staat te verifiëren
+            # Sla screenshot op om te zien of we nu wel op de juiste pagina zijn
             await page.screenshot(path="tiktok_debug.png")
-            print("Nieuwe debug screenshot opgeslagen.")
-            
-            # Geef de API de laatste kans om te antwoorden
-            await page.wait_for_timeout(5000)
+            print("Nieuwe debug screenshot 'tiktok_debug.png' gemaakt.")
 
         except Exception as e:
             print(f"❌ Navigatie fout: {e}")
