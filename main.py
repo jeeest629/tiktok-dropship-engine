@@ -15,7 +15,7 @@ def get_sheet():
         print(f"❌ Sheets Fout: {e}")
         return None
 
-# --- 2. ANALYSE LOGICA ---
+# --- 2. ANALYSE LOGICA (Fase 5, 6 & 7) ---
 def analyze_ad(ad):
     desc = ad.get("ad_description", "").lower()
     stats = ad.get("stats", {})
@@ -31,52 +31,53 @@ async def run():
     async with async_playwright() as p:
         print("🌐 Browser opstarten...")
         browser = await p.chromium.launch(headless=True)
+        # We gebruiken een context die cookies en headers strikt beheert
         context = await browser.new_context(
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"
         )
         page = await context.new_page()
 
-        # Stap 1: Alleen commit afwachten om cookies te vangen
-        print("🚀 Sessie-initialisatie starten...")
-        try:
-            await page.goto("https://ads.tiktok.com/business/creativecenter/inspiration/trends/pc/en", 
-                            wait_until="commit", timeout=60000)
-            await asyncio.sleep(10) # Handmatige pauze voor cookie-zetting
-        except Exception as e:
-            print(f"⚠️ Initiële sessie-waarschuwing (we gaan door): {e}")
+        # Stap 1: Alleen commit afwachten om cookies te vangen op Trends
+        print("🚀 Sessie-initialisatie op Trends...")
+        await page.goto("https://ads.tiktok.com/business/creativecenter/inspiration/trends/pc/en", 
+                        wait_until="commit", timeout=60000)
+        await asyncio.sleep(10) 
         
-        # Stap 2: Navigeer DIRECT naar de API URL
-        print("📡 Directe API-uitlezing forceren...")
+        # Stap 2: Actieve API-aanroep forceren met gespoofte headers
+        # We gebruiken page.evaluate om de browser de request te laten doen
+        print("📡 Forceren van geautoriseerde API-fetch...")
         api_url = "https://ads.tiktok.com/business/creativecenter/creative_radar_api/v1/top_ads/v2/list?limit=20&period=30&region=US&sort_by=fb_receive_count"
         
         try:
-            # We gaan direct naar de JSON-bron
-            response = await page.goto(api_url, wait_until="commit", timeout=60000)
-            await asyncio.sleep(5) # Wachten tot JSON gerenderd is
-
-            # Controleer of we JSON hebben of een foutpagina
-            content = await page.content()
-            if "materials" in content:
-                # Playwright rendert JSON vaak in een <pre> tag
-                json_text = await page.inner_text("body")
-                raw_data = json.loads(json_text)
-                
-                materials = raw_data.get("data", {}).get("materials", [])
-                if materials:
-                    print(f"✨ SUCCES! {len(materials)} ads gevonden.")
-                    rows = [analyze_ad(ad) for ad in materials]
-                    if sheet:
-                        sheet.append_rows(rows)
-                        print("📊 Data weggeschreven naar Google Sheets.")
-                else:
-                    print("⚠️ JSON leeg of onjuist formaat.")
+            # We injecteren een fetch die de Referer header handmatig zet
+            raw_data = await page.evaluate(f"""
+                async () => {{
+                    const response = await fetch('{api_url}', {{
+                        "headers": {{
+                            "accept": "application/json, text/plain, */*",
+                            "referer": "https://ads.tiktok.com/business/creativecenter/inspiration/topads/pc/en",
+                            "x-requested-with": "XMLHttpRequest"
+                        }},
+                        "method": "GET"
+                    }});
+                    return await response.json();
+                }}
+            """)
+            
+            materials = raw_data.get("data", {}).get("materials", [])
+            if materials:
+                print(f"✨ SUCCES! {len(materials)} ads opgehaald via header-injection.")
+                rows = [analyze_ad(ad) for ad in materials]
+                if sheet:
+                    sheet.append_rows(rows)
+                    print("📊 Data weggeschreven naar Google Sheets.")
             else:
-                print("❌ Geen advertentie-data gevonden in de response body.")
-                await page.screenshot(path="api_error.png")
-                    
+                print("⚠️ API antwoordde met lege data. TikTok herkent de fetch als bot.")
+                print(f"Debug: {json.dumps(raw_data)[:200]}")
+                
         except Exception as e:
-            print(f"❌ Kritieke fout bij API-aanroep: {e}")
-            await page.screenshot(path="final_error.png")
+            print(f"❌ Header-injection mislukt: {e}")
+            await page.screenshot(path="injection_error.png")
 
         await browser.close()
 
