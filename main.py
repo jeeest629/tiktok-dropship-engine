@@ -19,7 +19,6 @@ def get_sheet():
 def analyze_ad(ad):
     desc = ad.get("ad_description", "").lower()
     stats = ad.get("stats", {})
-    # Classificatie op basis van de JSON data (Phase 5, 6 & 7)
     angle = "Problem" if any(w in desc for w in ["tired", "fix", "solution", "struggle"]) else "Desire"
     hook = "POV" if "pov" in desc else "Question" if "?" in desc else "Standard"
     bundle = "Yes" if any(w in desc for w in ["buy", "get", "pack", "set", "off"]) else "No"
@@ -37,41 +36,47 @@ async def run():
         )
         page = await context.new_page()
 
-        # Stap 1: Alleen de 'veilige' pagina laden voor de sessie-context
-        print("🚀 Sessie-tokens verzamelen via Trends...")
-        await page.goto("https://ads.tiktok.com/business/creativecenter/inspiration/trends/pc/en", wait_until="networkidle")
+        # Stap 1: Alleen commit afwachten om cookies te vangen
+        print("🚀 Sessie-initialisatie starten...")
+        try:
+            await page.goto("https://ads.tiktok.com/business/creativecenter/inspiration/trends/pc/en", 
+                            wait_until="commit", timeout=60000)
+            await asyncio.sleep(10) # Handmatige pauze voor cookie-zetting
+        except Exception as e:
+            print(f"⚠️ Initiële sessie-waarschuwing (we gaan door): {e}")
         
-        # Stap 2: Navigeer DIRECT naar de API URL (Raw JSON Methode)
-        # Dit is GEEN nabootsing. We dwingen de browser om de JSON direct te tonen.
-        print("📡 Directe API-omleiding uitvoeren...")
+        # Stap 2: Navigeer DIRECT naar de API URL
+        print("📡 Directe API-uitlezing forceren...")
         api_url = "https://ads.tiktok.com/business/creativecenter/creative_radar_api/v1/top_ads/v2/list?limit=20&period=30&region=US&sort_by=fb_receive_count"
         
         try:
-            # We navigeren direct naar de API; de browser stuurt de cookies mee
-            response = await page.goto(api_url)
-            
-            if response.status != 200:
-                print(f"⚠️ TikTok weigerde de directe toegang. Status: {response.status}")
-                # Maak screenshot van de foutmelding
-                await page.screenshot(path="tiktok_error.png")
-            else:
-                # Trek de tekst (JSON) uit de body van de pagina
-                content = await page.inner_text("body")
-                raw_data = json.loads(content)
+            # We gaan direct naar de JSON-bron
+            response = await page.goto(api_url, wait_until="commit", timeout=60000)
+            await asyncio.sleep(5) # Wachten tot JSON gerenderd is
+
+            # Controleer of we JSON hebben of een foutpagina
+            content = await page.content()
+            if "materials" in content:
+                # Playwright rendert JSON vaak in een <pre> tag
+                json_text = await page.inner_text("body")
+                raw_data = json.loads(json_text)
                 
                 materials = raw_data.get("data", {}).get("materials", [])
                 if materials:
-                    print(f"✨ SUCCES! {len(materials)} ads direct uit JSON-body getrokken.")
+                    print(f"✨ SUCCES! {len(materials)} ads gevonden.")
                     rows = [analyze_ad(ad) for ad in materials]
                     if sheet:
                         sheet.append_rows(rows)
-                        print("📊 Gegevens verwerkt en naar Google Sheets verzonden.")
+                        print("📊 Data weggeschreven naar Google Sheets.")
                 else:
-                    print("⚠️ JSON ontvangen, maar geen advertenties gevonden.")
-                    print(f"Inhoud: {content[:200]}...")
+                    print("⚠️ JSON leeg of onjuist formaat.")
+            else:
+                print("❌ Geen advertentie-data gevonden in de response body.")
+                await page.screenshot(path="api_error.png")
                     
         except Exception as e:
-            print(f"❌ Directe API-uitlezing mislukt: {e}")
+            print(f"❌ Kritieke fout bij API-aanroep: {e}")
+            await page.screenshot(path="final_error.png")
 
         await browser.close()
 
