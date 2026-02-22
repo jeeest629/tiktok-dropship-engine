@@ -1,6 +1,16 @@
 from playwright.sync_api import sync_playwright
+import json
 
 URL = "https://ads.tiktok.com/business/creativecenter/topads/pc/en"
+
+def handle_response(response):
+    if "creative" in response.url and "api" in response.url:
+        try:
+            data = response.json()
+            print("API HIT:", response.url)
+            print("Keys:", list(data.keys()))
+        except:
+            pass
 
 with sync_playwright() as p:
     browser = p.chromium.launch(headless=True)
@@ -9,17 +19,10 @@ with sync_playwright() as p:
     )
     page = context.new_page()
 
-    print("Navigating...")
-    response = page.goto(URL, timeout=60000, wait_until="domcontentloaded")
+    page.on("response", handle_response)
 
-    print("Status:", response.status if response else "No response")
-    print("Final URL:", page.url)
+    page.goto(URL, wait_until="networkidle", timeout=60000)
 
-    page.wait_for_timeout(8000)
-
-    print("Title:", page.title())
-
-    html = page.content()
-    print("HTML length:", len(html))
+    page.wait_for_timeout(10000)
 
     browser.close()
