@@ -1,87 +1,93 @@
 import asyncio
 import json
+import os
 import gspread
 from google.oauth2.service_account import Credentials
 from playwright.async_api import async_playwright
 
-# --- CONFIGURATIE & GOOGLE SHEETS ---
+# --- GOOGLE SHEETS SETUP ---
 def get_sheet():
-    scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
-    creds = Credentials.from_service_account_file("service_account.json", scopes=scopes)
-    client = gspread.authorize(creds)
-    # Zorg dat deze sheet bestaat en gedeeld is met je service account mail
-    return client.open("TikTok_Ads_Data").get_worksheet(0)
+    try:
+        scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
+        creds = Credentials.from_service_account_file("service_account.json", scopes=scopes)
+        client = gspread.authorize(creds)
+        # Gebruik de exacte naam van je spreadsheet [cite: 35]
+        return client.open("TikTok_Ads_Data").get_worksheet(0)
+    except Exception as e:
+        print(f"❌ Google Sheets Connectie Fout: {e}")
+        return None
 
-# --- FASE 5 & 6: CLASSIFICATIE LOGICA ---
-def classify_ad(text, likes):
+# --- CLASSIFICATIE & SCORING (Phase 5, 6 & 7) ---
+def analyze_ad(text, metrics):
     text = text.lower()
-    # Angle Detection (Problem vs Desire) [cite: 37]
-    angle = "Unknown"
-    if any(w in text for w in ["tired of", "struggle", "fix", "stop"]):
-        angle = "Problem"
-    elif any(w in text for w in ["perfect", "obsessed", "must have", "dream"]):
-        angle = "Desire"
-    
+    # Angle Detection [cite: 3, 37]
+    angle = "Problem" if any(w in text for w in ["tired", "struggle", "fix"]) else "Desire"
     # Hook Classification [cite: 36]
-    hook = "Standard"
-    if "pov" in text: hook = "POV"
-    elif "?" in text: hook = "Question"
-    
-    # Velocity Score (Simple version) [cite: 34]
-    velocity = "High" if likes > 10000 else "Medium" if likes > 1000 else "Low"
+    hook = "POV" if "pov" in text else "Question" if "?" in text else "Visual"
+    # Velocity Score op basis van engagement [cite: 34]
+    likes = metrics.get('like_count', 0)
+    velocity = "High" if likes > 5000 else "Medium"
     
     return angle, hook, velocity
 
-# --- CORE ENGINE ---
 async def run():
     sheet = get_sheet()
-    
     async with async_playwright() as p:
+        print("Browser opstarten...")
         browser = await p.chromium.launch(headless=True)
         context = await browser.new_context(
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"
         )
         page = await context.new_page()
 
+        # Intercept API [cite: 33]
         async def handle_response(response):
-            # Target de Creative Radar API [cite: 33]
             if "creative_radar_api/v1/top_ads/v2/list" in response.url:
                 try:
-                    payload = await response.json()
-                    materials = payload.get("data", {}).get("materials", [])
+                    data = await response.json()
+                    materials = data.get("data", {}).get("materials", [])
+                    print(f"🚀 API data onderschept: {len(materials)} ads.")
                     
                     rows = []
                     for ad in materials:
-                        ad_id = ad.get("ad_id")
-                        title = ad.get("ad_description", "No Title")
-                        likes = ad.get("stats", {}).get("like_count", 0)
+                        desc = ad.get("ad_description", "")
+                        stats = ad.get("stats", {})
+                        angle, hook, velocity = analyze_ad(desc, stats)
                         
-                        # Voer classificatie uit 
-                        angle, hook, velocity = classify_ad(title, likes)
-                        
-                        # Bundle Detection (Phase 7) [cite: 38]
-                        bundle = "Yes" if "buy 1" in title.lower() or "off" in title.lower() else "No"
-                        
-                        rows.append([ad_id, title, likes, hook, angle, velocity, bundle])
+                        # Data model voor Sheet [cite: 35]
+                        rows.append([
+                            ad.get("ad_id"), 
+                            desc[:50], 
+                            stats.get("play_count"), 
+                            stats.get("like_count"),
+                            hook, angle, velocity
+                        ])
                     
-                    if rows:
+                    if sheet and rows:
                         sheet.append_rows(rows)
-                        print(f"✅ {len(rows)} ads gevalideerd en toegevoegd aan de Sheet.")
+                        print("✅ Data succesvol gelogd naar Google Sheets.")
                 except Exception as e:
-                    print(f"⚠️ Error: {e}")
+                    print(f"⚠️ Error in API handling: {e}")
 
         page.on("response", handle_response)
 
-        # Start scraping op het Creative Center [cite: 21, 33]
-        await page.goto("https://ads.tiktok.com/business/creativecenter/topads/pc/en?period=30&region=US&sort_by=fb_receive_count")
-        await page.wait_for_timeout(10000)
-        
-        # Scroll om meer data te triggeren
-        for _ in range(3):
-            await page.mouse.wheel(0, 1500)
-            await page.wait_for_timeout(3000)
-
-        await browser.close()
+        try:
+            print("Navigeren naar Top Ads sectie...")
+            # Gebruik de exacte URL om Trends-landing te voorkomen [cite: 31]
+            await page.goto("https://ads.tiktok.com/business/creativecenter/topads/pc/en?period=30&region=US", 
+                            wait_until="domcontentloaded", timeout=60000)
+            
+            # Interactie om API te triggeren [cite: 33]
+            await page.mouse.wheel(0, 2000)
+            await asyncio.sleep(10)
+            
+        except Exception as e:
+            print(f"❌ Navigatie mislukt: {e}")
+        finally:
+            # Forceer screenshot voor debug, ongeacht resultaat [cite: 31]
+            await page.screenshot(path="tiktok_debug.png")
+            print("📸 Debug screenshot 'tiktok_debug.png' gegenereerd.")
+            await browser.close()
 
 if __name__ == "__main__":
     asyncio.run(run())
