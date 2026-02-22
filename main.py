@@ -1,14 +1,14 @@
 from playwright.sync_api import sync_playwright
-import json
 
-URL = "https://ads.tiktok.com/business/creativecenter/topads/pc/en"
+URL = "https://ads.tiktok.com/business/creativecenter/inspiration/topads/pc/en"
 
 def handle_response(response):
-    if "creative" in response.url and "api" in response.url:
+    if "creative_radar_api" in response.url:
         try:
             data = response.json()
-            print("API HIT:", response.url)
-            print("Keys:", list(data.keys()))
+            if "data" in data:
+                print("API:", response.url)
+                print("Has data keys:", list(data["data"].keys()) if isinstance(data["data"], dict) else "list")
         except:
             pass
 
@@ -21,8 +21,10 @@ with sync_playwright() as p:
 
     page.on("response", handle_response)
 
-    page.goto(URL, wait_until="networkidle", timeout=60000)
+    page.goto(URL, wait_until="domcontentloaded", timeout=60000)
 
-    page.wait_for_timeout(10000)
+    page.wait_for_timeout(8000)
+
+    print("Title:", page.title())
 
     browser.close()
