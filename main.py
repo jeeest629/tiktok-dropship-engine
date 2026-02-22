@@ -19,10 +19,9 @@ def get_sheet():
 def analyze_ad(ad):
     desc = ad.get("ad_description", "").lower()
     stats = ad.get("stats", {})
-    # Phase 5 & 6: Angle & Hook classification
+    # Classificatie op basis van de JSON data (Phase 5, 6 & 7)
     angle = "Problem" if any(w in desc for w in ["tired", "fix", "solution", "struggle"]) else "Desire"
     hook = "POV" if "pov" in desc else "Question" if "?" in desc else "Standard"
-    # Phase 7: Bundle Detection
     bundle = "Yes" if any(w in desc for w in ["buy", "get", "pack", "set", "off"]) else "No"
     return [ad.get("ad_id"), desc[:150], stats.get("play_count", 0), stats.get("like_count", 0), hook, angle, bundle]
 
@@ -33,52 +32,47 @@ async def run():
     async with async_playwright() as p:
         print("🌐 Browser opstarten...")
         browser = await p.chromium.launch(headless=True)
-        # Gebruik een context met een realistische user agent
         context = await browser.new_context(
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"
         )
         page = await context.new_page()
 
-        # STAP 1: Bouw een legitieme sessie op een pagina die WEL werkt
-        print("🚀 Sessie initialiseren via Trends...")
+        # Stap 1: Alleen de 'veilige' pagina laden voor de sessie-context
+        print("🚀 Sessie-tokens verzamelen via Trends...")
         await page.goto("https://ads.tiktok.com/business/creativecenter/inspiration/trends/pc/en", wait_until="networkidle")
         
-        # STAP 2: Voer een 'XHR' injectie uit
-        # We gebruiken de browser om de API call te doen alsof de website het zelf doet.
-        # Dit omzeilt de 'Unexpected end of JSON' omdat de browser de sessie-headers meestuurt.
-        print("📡 Actief data opvragen via interne fetch...")
-        
+        # Stap 2: Navigeer DIRECT naar de API URL (Raw JSON Methode)
+        # Dit is GEEN nabootsing. We dwingen de browser om de JSON direct te tonen.
+        print("📡 Directe API-omleiding uitvoeren...")
         api_url = "https://ads.tiktok.com/business/creativecenter/creative_radar_api/v1/top_ads/v2/list?limit=20&period=30&region=US&sort_by=fb_receive_count"
         
-        # We proberen de data op te halen via de browser console
         try:
-            raw_data = await page.evaluate(f"""
-                async () => {{
-                    const response = await fetch('{api_url}');
-                    if (!response.ok) return {{ error: response.status }};
-                    return await response.json();
-                }}
-            """)
+            # We navigeren direct naar de API; de browser stuurt de cookies mee
+            response = await page.goto(api_url)
             
-            if "error" in raw_data:
-                print(f"⚠️ TikTok blokkeerde de fetch met status: {raw_data['error']}")
+            if response.status != 200:
+                print(f"⚠️ TikTok weigerde de directe toegang. Status: {response.status}")
+                # Maak screenshot van de foutmelding
+                await page.screenshot(path="tiktok_error.png")
             else:
+                # Trek de tekst (JSON) uit de body van de pagina
+                content = await page.inner_text("body")
+                raw_data = json.loads(content)
+                
                 materials = raw_data.get("data", {}).get("materials", [])
                 if materials:
-                    print(f"✨ SUCCES! {len(materials)} ads opgehaald.")
+                    print(f"✨ SUCCES! {len(materials)} ads direct uit JSON-body getrokken.")
                     rows = [analyze_ad(ad) for ad in materials]
                     if sheet:
                         sheet.append_rows(rows)
-                        print("📊 Data weggeschreven naar Google Sheets.")
+                        print("📊 Gegevens verwerkt en naar Google Sheets verzonden.")
                 else:
-                    print("⚠️ API antwoordde, maar stuurde geen advertenties.")
-                    print(f"Debug Info: {json.dumps(raw_data)[:200]}")
+                    print("⚠️ JSON ontvangen, maar geen advertenties gevonden.")
+                    print(f"Inhoud: {content[:200]}...")
                     
         except Exception as e:
-            print(f"❌ Interne fetch mislukt: {e}")
+            print(f"❌ Directe API-uitlezing mislukt: {e}")
 
-        # Maak altijd een screenshot voor visuele controle in GitHub Artifacts
-        await page.screenshot(path="tiktok_debug.png")
         await browser.close()
 
 if __name__ == "__main__":
