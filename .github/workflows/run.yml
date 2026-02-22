@@ -42,3 +42,9 @@ jobs:
 
       - name: Run script
         run: python main.py
+      
+      - name: Upload Debug Screenshot
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug-screenshots
+          path: tiktok_debug.png
