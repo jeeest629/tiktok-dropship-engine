@@ -1,52 +1,62 @@
 import asyncio
 import json
-import os
 import gspread
 from google.oauth2.service_account import Credentials
 from playwright.async_api import async_playwright
 
-# --- GOOGLE SHEETS SETUP (Fase 4) ---
+# --- CONFIGURATIE & GOOGLE SHEETS (Fase 4) ---
 def get_sheet():
     try:
-        # Gebruikt de credentials uit de GitHub Secrets [cite: 15, 16]
         scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
+        # Gebruikt service_account.json aangemaakt door GitHub Actions
         creds = Credentials.from_service_account_file("service_account.json", scopes=scopes)
         client = gspread.authorize(creds)
-        # Zorg dat de naam exact 'TikTok_Ads_Data' is of pas dit aan [cite: 35]
+        # Zorg dat de naam van de Sheet exact klopt
         return client.open("TikTok_Ads_Data").get_worksheet(0)
     except Exception as e:
-        print(f"❌ Google Sheets Connectie Fout: {e}")
+        print(f"❌ Google Sheets Fout: {e}")
         return None
 
-# --- CLASSIFICATIE & ANALYSE (Fase 5 & 6) ---
-def analyze_ad(text, stats):
-    text = text.lower()
-    # Angle Detection: Problem vs Desire [cite: 37]
-    angle = "Problem" if any(w in text for w in ["tired", "struggle", "fix", "bad"]) else "Desire"
-    # Hook Classification [cite: 36]
-    hook = "POV" if "pov" in text else "Question" if "?" in text else "Visual"
+# --- FASE 5, 6 & 7: ANALYSE LOGICA ---
+def calculate_metrics(ad_data):
+    desc = ad_data.get("ad_description", "").lower()
+    stats = ad_data.get("stats", {})
+    likes = stats.get("like_count", 0)
     
-    likes = stats.get('like_count', 0)
-    velocity = "High" if likes > 5000 else "Medium"
+    # Angle Detection (Problem vs Desire)
+    angle = "Problem" if any(w in desc for w in ["tired", "struggle", "fix", "solution"]) else "Desire"
     
-    return angle, hook, velocity
+    # Hook Classification
+    hook = "POV" if "pov" in desc else "Question" if "?" in desc else "Benefit"
+    
+    # Velocity Score (Engagement snelheid)
+    velocity = "High" if likes > 10000 else "Medium" if likes > 1000 else "Low"
+    
+    # Bundle Detection
+    is_bundle = "Yes" if any(w in desc for w in ["buy 1", "get 1", "pack", "set"]) else "No"
+    
+    return angle, hook, velocity, is_bundle
 
+# --- CORE ENGINE ---
 async def run():
     sheet = get_sheet()
     
     async with async_playwright() as p:
-        print("Browser opstarten met stealth instellingen...")
+        print("Browser opstarten met Stealth configuratie...")
         browser = await p.chromium.launch(
-            headless=True, 
+            headless=True,
             args=["--disable-blink-features=AutomationControlled", "--no-sandbox"]
         )
+        
+        # Gebruik een context die minder op een bot lijkt
         context = await browser.new_context(
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
             viewport={'width': 1920, 'height': 1080}
         )
+        
         page = await context.new_page()
 
-        # Phase 3: Interceptie van de 'Creative Radar' API [cite: 34]
+        # Interceptor voor de Creative Radar API
         async def handle_response(response):
             if "creative_radar_api/v1/top_ads/v2/list" in response.url:
                 try:
@@ -54,55 +64,53 @@ async def run():
                     materials = payload.get("data", {}).get("materials", [])
                     print(f"🚀 API data onderschept: {len(materials)} ads gevonden.")
                     
-                    rows_to_insert = []
+                    rows = []
                     for ad in materials:
-                        desc = ad.get("ad_description", "")
-                        stats = ad.get("stats", {})
-                        angle, hook, velocity = analyze_ad(desc, stats)
+                        angle, hook, velocity, bundle = calculate_metrics(ad)
                         
-                        # Data Model voor Google Sheets [cite: 35]
-                        rows_to_insert.append([
-                            ad.get("ad_id"), 
-                            desc[:100], # Eerste 100 tekens van de beschrijving
-                            stats.get("play_count", 0), 
-                            stats.get("like_count", 0),
-                            hook, 
-                            angle, 
-                            velocity
+                        # Data Model voor Google Sheets
+                        rows.append([
+                            ad.get("ad_id"),
+                            ad.get("ad_description", "")[:100],
+                            ad.get("stats", {}).get("play_count", 0),
+                            ad.get("stats", {}).get("like_count", 0),
+                            hook,
+                            angle,
+                            velocity,
+                            bundle
                         ])
                     
-                    if sheet and rows_to_insert:
-                        sheet.append_rows(rows_to_insert)
-                        print(f"✅ {len(rows_to_insert)} rijen toegevoegd aan Google Sheets.")
+                    if sheet and rows:
+                        sheet.append_rows(rows)
+                        print(f"✅ {len(rows)} ads gelogd naar Google Sheets.")
                 except Exception as e:
-                    print(f"⚠️ Fout bij API verwerking: {e}")
+                    print(f"⚠️ API verwerkingsfout: {e}")
 
         page.on("response", handle_response)
 
         try:
-            print("Navigeren naar Top Ads sectie...")
-            # Oplossing voor de timeout: gebruik 'domcontentloaded' ipv 'networkidle' 
-            await page.goto(
-                "https://ads.tiktok.com/business/creativecenter/topads/pc/en?period=30&region=US", 
-                wait_until="domcontentloaded", 
-                timeout=60000 # Verhoogde timeout naar 60 seconden
-            )
-            
-            # Geef de pagina de tijd om de API-calls te doen na de initiële load
-            print("Wachten op data-activiteit...")
-            await asyncio.sleep(15) 
-            
-            # Forceer scrollen om 'lazy loading' en extra API-calls te triggeren
-            print("Scrollen om extra ads te laden...")
-            await page.mouse.wheel(0, 2000)
+            # STAP 1: Navigeer eerst naar Trends (Bypass blokkade)
+            print("Sessie initialiseren via Trends pagina...")
+            await page.goto("https://ads.tiktok.com/business/creativecenter/inspiration/trends/pc/en", wait_until="domcontentloaded")
             await asyncio.sleep(5)
+
+            # STAP 2: Deep-link naar Top Ads Dashboard
+            print("Navigeren naar Top Ads Dashboard...")
+            target_url = "https://ads.tiktok.com/business/creativecenter/topads/pc/en?period=30&region=US"
+            await page.goto(target_url, wait_until="domcontentloaded", timeout=60000)
             
+            # STAP 3: Interactie om 'menselijkheid' te veinzen en API te triggeren
+            print("Scrollen om data te laden...")
+            for _ in range(3):
+                await page.mouse.wheel(0, 1000)
+                await asyncio.sleep(3)
+
         except Exception as e:
-            print(f"❌ Navigatie mislukt: {e}")
+            print(f"❌ Script fout: {e}")
         finally:
-            # Sla de debug screenshot ALTIJD op [cite: 31, 33]
+            # Maak screenshot voor de GitHub Artifacts
             await page.screenshot(path="tiktok_debug.png")
-            print("📸 Debug screenshot opgeslagen.")
+            print("📸 Debug screenshot gemaakt.")
             await browser.close()
 
 if __name__ == "__main__":
