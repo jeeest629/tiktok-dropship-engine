@@ -1,18 +1,18 @@
-import requests
-from bs4 import BeautifulSoup
+from playwright.sync_api import sync_playwright
 
 URL = "https://ads.tiktok.com/business/creativecenter/topads/pc/en"
 
-headers = {
-    "User-Agent": "Mozilla/5.0"
-}
+with sync_playwright() as p:
+    browser = p.chromium.launch(headless=True)
+    page = browser.new_page()
+    
+    page.goto(URL, timeout=60000)
+    page.wait_for_timeout(5000)
 
-response = requests.get(URL, headers=headers)
+    print("Page loaded")
+    print("Title:", page.title())
 
-print("Status code:", response.status_code)
+    html = page.content()
+    print("HTML length:", len(html))
 
-soup = BeautifulSoup(response.text, "lxml")
-
-title = soup.title.string if soup.title else "Geen title gevonden"
-
-print("Page title:", title)
+    browser.close()
