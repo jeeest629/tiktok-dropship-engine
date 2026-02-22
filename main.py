@@ -1,30 +1,44 @@
-from playwright.sync_api import sync_playwright
+import asyncio
+import json
+from playwright.async_api import async_playwright
 
-URL = "https://ads.tiktok.com/business/creativecenter/inspiration/topads/pc/en"
+async def run():
+    async with async_playwright() as p:
+        # Start de browser (headless voor snelheid in GitHub Actions)
+        browser = await p.chromium.launch(headless=True)
+        context = await browser.new_context(user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36")
+        page = await context.new_page()
 
-def handle_response(response):
-    if "creative_radar_api" in response.url:
-        try:
-            data = response.json()
-            if "data" in data:
-                print("API:", response.url)
-                print("Has data keys:", list(data["data"].keys()) if isinstance(data["data"], dict) else "list")
-        except:
-            pass
+        # Functie om de API-respons te vangen
+        async def handle_response(response):
+            if "top_ads/v2/list" in response.url:
+                try:
+                    payload = await response.json()
+                    materials = payload.get("data", {}).get("materials", [])
+                    
+                    print(f"\n✅ API Gevonden! Aantal ads in deze batch: {len(materials)}")
+                    
+                    if materials:
+                        first_ad = materials[0]
+                        print("\n--- INSPECTIE EERSTE AD ---")
+                        print(f"Beschikbare keys: {list(first_ad.keys())}")
+                        # Print een kleine preview van de data
+                        print(json.dumps(first_ad, indent=2)[:500] + "...") 
+                        print("---------------------------\n")
+                except Exception as e:
+                    print(f"⚠️ Error bij parsen API: {e}")
 
-with sync_playwright() as p:
-    browser = p.chromium.launch(headless=True)
-    context = browser.new_context(
-        user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0 Safari/537.36"
-    )
-    page = context.new_page()
+        # Luister naar alle netwerk responses
+        page.on("response", handle_response)
 
-    page.on("response", handle_response)
+        print("Navigeren naar TikTok Creative Center...")
+        # Gebruik domcontentloaded om timeouts te voorkomen bij oneindig ladende pagina's
+        await page.goto("https://ads.tiktok.com/business/creativecenter/topads/pc/en", wait_until="domcontentloaded")
+        
+        # Wacht even zodat de API-call de tijd heeft om te voltooien
+        await page.wait_for_timeout(10000) 
+        
+        await browser.close()
 
-    page.goto(URL, wait_until="domcontentloaded", timeout=60000)
-
-    page.wait_for_timeout(8000)
-
-    print("Title:", page.title())
-
-    browser.close()
+if __name__ == "__main__":
+    asyncio.run(run())
