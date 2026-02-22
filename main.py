@@ -1,78 +1,87 @@
 import asyncio
 import json
+import gspread
+from google.oauth2.service_account import Credentials
 from playwright.async_api import async_playwright
 
+# --- CONFIGURATIE & GOOGLE SHEETS ---
+def get_sheet():
+    scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
+    creds = Credentials.from_service_account_file("service_account.json", scopes=scopes)
+    client = gspread.authorize(creds)
+    # Zorg dat deze sheet bestaat en gedeeld is met je service account mail
+    return client.open("TikTok_Ads_Data").get_worksheet(0)
+
+# --- FASE 5 & 6: CLASSIFICATIE LOGICA ---
+def classify_ad(text, likes):
+    text = text.lower()
+    # Angle Detection (Problem vs Desire) [cite: 37]
+    angle = "Unknown"
+    if any(w in text for w in ["tired of", "struggle", "fix", "stop"]):
+        angle = "Problem"
+    elif any(w in text for w in ["perfect", "obsessed", "must have", "dream"]):
+        angle = "Desire"
+    
+    # Hook Classification [cite: 36]
+    hook = "Standard"
+    if "pov" in text: hook = "POV"
+    elif "?" in text: hook = "Question"
+    
+    # Velocity Score (Simple version) [cite: 34]
+    velocity = "High" if likes > 10000 else "Medium" if likes > 1000 else "Low"
+    
+    return angle, hook, velocity
+
+# --- CORE ENGINE ---
 async def run():
+    sheet = get_sheet()
+    
     async with async_playwright() as p:
-        # Launch browser met stealth-instellingen
-        browser = await p.chromium.launch(
-            headless=True,
-            args=[
-                "--disable-blink-features=AutomationControlled",
-                "--no-sandbox",
-                "--disable-setuid-sandbox"
-            ]
-        )
-        
-        # Gebruik een specifieke context met extra headers
+        browser = await p.chromium.launch(headless=True)
         context = await browser.new_context(
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
-            viewport={'width': 1920, 'height': 1080},
-            extra_http_headers={
-                "Referer": "https://ads.tiktok.com/business/creativecenter/inspiration/topads/pc/en"
-            }
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"
         )
-        
         page = await context.new_page()
 
-        # Interceptor voor de Top Ads API
         async def handle_response(response):
+            # Target de Creative Radar API [cite: 33]
             if "creative_radar_api/v1/top_ads/v2/list" in response.url:
                 try:
                     payload = await response.json()
                     materials = payload.get("data", {}).get("materials", [])
                     
-                    if materials:
-                        print(f"\n🚀 API DOORBRAAK! Ads gevonden: {len(materials)}")
-                        print("\n--- BESCHIKBARE DATA VELDEN (KEYS) ---")
-                        print(list(materials[0].keys())) 
+                    rows = []
+                    for ad in materials:
+                        ad_id = ad.get("ad_id")
+                        title = ad.get("ad_description", "No Title")
+                        likes = ad.get("stats", {}).get("like_count", 0)
                         
-                        print("\n--- PREVIEW EERSTE AD DATA ---")
-                        print(json.dumps(materials[0], indent=2)[:800])
-                    else:
-                        print("⚠️ API gevonden, maar de material-lijst is leeg.")
+                        # Voer classificatie uit 
+                        angle, hook, velocity = classify_ad(title, likes)
+                        
+                        # Bundle Detection (Phase 7) [cite: 38]
+                        bundle = "Yes" if "buy 1" in title.lower() or "off" in title.lower() else "No"
+                        
+                        rows.append([ad_id, title, likes, hook, angle, velocity, bundle])
+                    
+                    if rows:
+                        sheet.append_rows(rows)
+                        print(f"✅ {len(rows)} ads gevalideerd en toegevoegd aan de Sheet.")
                 except Exception as e:
-                    print(f"⚠️ Fout bij verwerken API JSON: {e}")
+                    print(f"⚠️ Error: {e}")
 
         page.on("response", handle_response)
 
-        print("Navigeren naar de Top Ads Deep-Link...")
-        try:
-            # Directe link met parameters om de juiste API te triggeren
-            target_url = "https://ads.tiktok.com/business/creativecenter/topads/pc/en?period=30&region=US&sort_by=fb_receive_count"
-            
-            await page.goto(target_url, wait_until="networkidle", timeout=60000)
-            
-            # Wacht op de advertentie-kaarten (meestal div's met een 'Card' class)
-            print("Wachten op het laden van de advertentie-grid...")
-            await page.wait_for_timeout(10000) # Harde pauze voor JS rendering
-            
-            # Forceer interactie om lazy-loading API's te triggeren
-            print("Scrollen voor data-extractie...")
-            for i in range(5):
-                await page.mouse.wheel(0, 800)
-                await page.wait_for_timeout(2000)
-
-            # Sla screenshot op om te zien of we nu wel op de juiste pagina zijn
-            await page.screenshot(path="tiktok_debug.png")
-            print("Nieuwe debug screenshot 'tiktok_debug.png' gemaakt.")
-
-        except Exception as e:
-            print(f"❌ Navigatie fout: {e}")
+        # Start scraping op het Creative Center [cite: 21, 33]
+        await page.goto("https://ads.tiktok.com/business/creativecenter/topads/pc/en?period=30&region=US&sort_by=fb_receive_count")
+        await page.wait_for_timeout(10000)
         
-        finally:
-            await browser.close()
-            print("Browser gesloten.")
+        # Scroll om meer data te triggeren
+        for _ in range(3):
+            await page.mouse.wheel(0, 1500)
+            await page.wait_for_timeout(3000)
+
+        await browser.close()
 
 if __name__ == "__main__":
     asyncio.run(run())
