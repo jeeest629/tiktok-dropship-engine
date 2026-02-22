@@ -1,106 +1,95 @@
 import asyncio
 import json
 import gspread
+import requests
 from google.oauth2.service_account import Credentials
 from playwright.async_api import async_playwright
 
-# --- GOOGLE SHEETS SETUP (Fase 4) ---
+# --- 1. GOOGLE SHEETS SETUP ---
 def get_sheet():
     try:
-        # Gebruikt de credentials uit de GitHub Secrets [cite: 15, 25]
         scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
         creds = Credentials.from_service_account_file("service_account.json", scopes=scopes)
         client = gspread.authorize(creds)
-        # Zorg dat de sheet 'TikTok_Ads_Data' bestaat [cite: 35]
+        # Zorg dat de sheet 'TikTok_Ads_Data' bestaat in je Drive
         return client.open("TikTok_Ads_Data").get_worksheet(0)
     except Exception as e:
-        print(f"❌ Sheets Fout: {e}")
+        print(f"❌ Google Sheets Connectie Fout: {e}")
         return None
 
-# --- ANALYSE LOGICA (Fase 5, 6 & 7) ---
-def analyze_ad(ad):
-    desc = ad.get("ad_description", "").lower()
-    stats = ad.get("stats", {})
-    
-    # Fase 6: Angle Detection (Problem vs Desire) [cite: 37]
-    angle = "Problem" if any(w in desc for w in ["tired", "fix", "solution", "struggle"]) else "Desire"
-    
-    # Fase 5: Hook Classification [cite: 36]
-    hook = "POV" if "pov" in desc else "Question" if "?" in desc else "Standard"
-    
-    # Fase 7: Bundle Detection [cite: 38]
-    bundle = "Yes" if any(w in desc for w in ["buy", "get", "pack", "set", "off"]) else "No"
-    
-    return angle, hook, bundle
+# --- 2. DATA ANALYSE ENGINE (Phase 5, 6 & 7) ---
+def process_ad_data(materials):
+    rows = []
+    for ad in materials:
+        desc = ad.get("ad_description", "").lower()
+        stats = ad.get("stats", {})
+        
+        # Phase 6: Angle Detection
+        angle = "Problem" if any(w in desc for w in ["tired", "fix", "solution", "struggle"]) else "Desire"
+        
+        # Phase 5: Hook Classification
+        hook = "POV" if "pov" in desc else "Question" if "?" in desc else "Standard"
+        
+        # Phase 7: Bundle Detection
+        bundle = "Yes" if any(w in desc for w in ["buy", "get", "pack", "set", "off"]) else "No"
+        
+        rows.append([
+            ad.get("ad_id"),
+            ad.get("ad_description", "")[:150],
+            stats.get("play_count", 0),
+            stats.get("like_count", 0),
+            hook,
+            angle,
+            bundle,
+            "US" # Regio filter
+        ])
+    return rows
 
+# --- 3. DE PURE API ENGINE ---
 async def run():
     sheet = get_sheet()
     
-    # Gebruik Playwright voor browser automatisering (Fase 2) 
     async with async_playwright() as p:
-        print("Browser opstarten...")
+        print("🔐 Stap 1: Authenticatie-tokens genereren...")
         browser = await p.chromium.launch(headless=True)
-        context = await browser.new_context(
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
-        )
+        # We gebruiken een context om alleen de noodzakelijke cookies te vangen
+        context = await browser.new_context()
         page = await context.new_page()
 
-        # Passive Interceptor: Luister naar de natuurlijke API respons 
-        async def handle_response(response):
-            # We zoeken specifiek naar de top_ads lijst 
-            if "top_ads/v2/list" in response.url:
-                try:
-                    # Check of de respons werkelijk JSON is om de 'DOCTYPE' error te voorkomen
-                    content_type = response.headers.get("content-type", "")
-                    if "application/json" in content_type:
-                        payload = await response.json()
-                        materials = payload.get("data", {}).get("materials", [])
-                        
-                        if materials:
-                            print(f"✅ Onderschept: {len(materials)} ads.")
-                            rows = []
-                            for ad in materials:
-                                angle, hook, bundle = analyze_ad(ad)
-                                # Structureren van data voor Google Sheets [cite: 35]
-                                rows.append([
-                                    ad.get("ad_id"), 
-                                    ad.get("ad_description", "")[:100], 
-                                    ad.get("stats", {}).get("play_count", 0), 
-                                    ad.get("stats", {}).get("like_count", 0),
-                                    hook, 
-                                    angle, 
-                                    bundle
-                                ])
-                            
-                            if sheet and rows:
-                                sheet.append_rows(rows)
-                                print("📊 Data succesvol weggeschreven naar Google Sheets.")
-                except Exception as e:
-                    print(f"⚠️ Interceptie fout: {e}")
-
-        page.on("response", handle_response)
-
-        print("Sessie opstarten en navigeren...")
+        # We gaan naar de login-loze trends pagina om de sessie te 'warmen'
+        await page.goto("https://ads.tiktok.com/business/creativecenter/inspiration/trends/pc/en", wait_until="domcontentloaded")
+        
+        print("🚀 Stap 2: Directe API Request forceren...")
+        # We voeren de API call uit via de interne browser-fetch (omzeilt headers/beveiliging)
+        api_script = """
+        async () => {
+            const url = "https://ads.tiktok.com/business/creativecenter/creative_radar_api/v1/top_ads/v2/list?limit=20&period=30&region=US&sort_by=fb_receive_count";
+            const res = await fetch(url);
+            return await res.json();
+        }
+        """
+        
         try:
-            # Navigeer naar de pagina; de website zal zelf de API aanroepen [cite: 31, 33]
-            await page.goto(
-                "https://ads.tiktok.com/business/creativecenter/topads/pc/en?period=30&region=US", 
-                wait_until="domcontentloaded",
-                timeout=60000
-            )
+            result = await page.evaluate(api_script)
+            materials = result.get("data", {}).get("materials", [])
             
-            # Simuleer scrollen om extra API-calls (lazy loading) te triggeren 
-            print("Scrollen om data-stroom op gang te brengen...")
-            for i in range(5):
-                await page.mouse.wheel(0, 1000)
-                await asyncio.sleep(4) # Geef de API tijd om te antwoorden
-
+            if materials:
+                print(f"✅ Data Ontvangen: {len(materials)} advertenties gevonden.")
+                
+                # Verwerk en schrijf naar Sheets
+                data_rows = process_ad_data(materials)
+                if sheet:
+                    sheet.append_rows(data_rows)
+                    print(f"📊 {len(data_rows)} rijen succesvol naar Google Sheets geschreven!")
+            else:
+                print("⚠️ TikTok gaf een leeg resultaat terug. Waarschijnlijk API-beperking.")
+                # Print de ruwe respons voor diagnose in de logs
+                print(f"Raw Response: {json.dumps(result)[:500]}")
+                
         except Exception as e:
-            print(f"❌ Fout tijdens navigatie: {e}")
+            print(f"❌ API Call mislukt: {e}")
+        
         finally:
-            # Altijd een screenshot maken voor debugging 
-            await page.screenshot(path="tiktok_debug.png")
-            print("📸 Debug screenshot gemaakt.")
             await browser.close()
 
 if __name__ == "__main__":
